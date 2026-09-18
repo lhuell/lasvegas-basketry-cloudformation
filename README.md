@@ -466,8 +466,6 @@ AWS cost awareness
 
 Interview Summary
 
-A concise way to describe this project in an interview:
-
 I built a multi-tier gift basket ordering application in AWS and then recreated the environment with CloudFormation. The architecture used an internet-facing Application Load Balancer, a private EC2 instance running Apache and PHP, and a private RDS MySQL database. I configured VPC networking, security groups, NAT access, IAM roles, Systems Manager, target groups, and database connectivity. I also troubleshot CloudFormation, PHP, RDS, and networking issues and validated the full customer-to-database workflow before cleaning up the environment.
 
 Future Enhancements
