@@ -1,0 +1,540 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  Las Vegas Basketry CloudFormation project.
+  Labs 1 through 6 create the VPC, subnets, routing,
+  security groups, NAT Gateway, IAM role, and EC2 instance profile.
+
+Parameters:
+
+  DBUsername:
+    Type: String
+    Default: basketryadmin
+    Description: Master username for the Basketry MySQL database
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Master password for the Basketry MySQL database
+
+Resources:
+
+  # =========================================================
+  # LAB 1 - VPC
+  # =========================================================
+
+  BasketryVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.50.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-cfn-vpc
+
+
+  # =========================================================
+  # LAB 2 - SUBNETS
+  # =========================================================
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BasketryVPC
+      CidrBlock: 10.50.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-public-a
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BasketryVPC
+      CidrBlock: 10.50.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-public-b
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BasketryVPC
+      CidrBlock: 10.50.11.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-private-a
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BasketryVPC
+      CidrBlock: 10.50.12.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-private-b
+
+
+  # =========================================================
+  # LAB 3 - INTERNET GATEWAY AND ROUTING
+  # =========================================================
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-igw
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref BasketryVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref BasketryVPC
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-public-rt
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref BasketryVPC
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-private-rt
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+
+  # =========================================================
+  # LAB 4 - SECURITY GROUPS
+  # =========================================================
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Las Vegas Basketry Application Load Balancer
+      VpcId: !Ref BasketryVPC
+
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-alb-sg
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Las Vegas Basketry private application server
+      VpcId: !Ref BasketryVPC
+
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-app-sg
+
+
+  # =========================================================
+  # LAB 5 - NAT GATEWAY
+  # =========================================================
+
+  NatEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-nat-eip
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-nat-gateway
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+
+  # =========================================================
+  # LAB 6 - IAM ROLE AND INSTANCE PROFILE
+  # =========================================================
+
+  BasketryEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-ec2-ssm-role
+
+  BasketryInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BasketryEC2Role
+
+  # =========================================================
+  # LAB 7 - PRIVATE EC2 APPLICATION SERVER
+  # =========================================================
+
+  BasketryAppServer:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - PrivateDefaultRoute
+    Properties:
+
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+
+      InstanceType: t3.micro
+
+      SubnetId: !Ref PrivateSubnetA
+
+      SecurityGroupIds:
+        - !Ref AppSecurityGroup
+
+      IamInstanceProfile: !Ref BasketryInstanceProfile
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-cfn-app-01
+
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+
+          dnf update -y
+
+          dnf install -y httpd php php-mysqlnd
+
+          systemctl enable httpd
+          systemctl start httpd
+
+          cat > /var/www/html/index.php <<'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Las Vegas Basketry</title>
+          </head>
+
+          <body>
+              <h1>Las Vegas Basketry</h1>
+
+              <p>
+              This EC2 application server was created automatically
+              with AWS CloudFormation.
+              </p>
+
+              <?php
+              echo "<p>PHP is working successfully.</p>";
+              ?>
+
+          </body>
+          </html>
+          EOF
+
+    # =========================================================
+  # LAB 8 - TARGET GROUP
+  # =========================================================
+
+  BasketryTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: basketry-cfn-tg
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref BasketryVPC
+      TargetType: instance
+
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+
+      Matcher:
+        HttpCode: '200'
+
+      Targets:
+        - Id: !Ref BasketryAppServer
+          Port: 80
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-cfn-target-group  
+
+  # =========================================================
+  # LAB 9 - APPLICATION LOAD BALANCER
+  # =========================================================
+
+  BasketryLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: basketry-cfn-alb
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-cfn-alb
+
+  BasketryHTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref BasketryLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BasketryTargetGroup 
+    
+  # =========================================================
+  # LAB 10 - RDS SECURITY GROUP AND DB SUBNET GROUP
+  # =========================================================
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Las Vegas Basketry RDS MySQL database
+      VpcId: !Ref BasketryVPC
+
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-db-sg
+
+  BasketryDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for Las Vegas Basketry RDS
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-db-subnet-group
+
+  # =========================================================
+  # LAB 11 - RDS MYSQL DATABASE
+  # =========================================================
+
+  BasketryDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+
+      Engine: mysql
+
+      DBInstanceClass: db.t3.micro
+
+      AllocatedStorage: 20
+      StorageType: gp3
+      StorageEncrypted: true
+
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+
+      DBSubnetGroupName: !Ref BasketryDBSubnetGroup
+
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+
+      PubliclyAccessible: false
+
+      MultiAZ: false
+
+      BackupRetentionPeriod: 0
+
+      DeletionProtection: false
+
+      Tags:
+        - Key: Name
+          Value: lasvegas-basketry-cfn-mysql
+ 
+# =========================================================
+# OUTPUTS
+# =========================================================
+
+Outputs:
+
+  VpcId:
+    Description: ID of the Las Vegas Basketry VPC
+    Value: !Ref BasketryVPC
+
+  PublicSubnetAId:
+    Description: Public subnet A
+    Value: !Ref PublicSubnetA
+
+  PublicSubnetBId:
+    Description: Public subnet B
+    Value: !Ref PublicSubnetB
+
+  PrivateSubnetAId:
+    Description: Private subnet A
+    Value: !Ref PrivateSubnetA
+
+  PrivateSubnetBId:
+    Description: Private subnet B
+    Value: !Ref PrivateSubnetB
+
+  ALBSecurityGroupId:
+    Description: Security group for the Application Load Balancer
+    Value: !Ref ALBSecurityGroup
+
+  AppSecurityGroupId:
+    Description: Security group for the private EC2 application server
+    Value: !Ref AppSecurityGroup
+
+  NatGatewayId:
+    Description: NAT Gateway used by the private subnets
+    Value: !Ref NatGateway
+
+  NatElasticIp:
+    Description: Elastic IP used by the NAT Gateway
+    Value: !Ref NatEIP
+
+  EC2RoleName:
+    Description: IAM role for the Basketry EC2 instance
+    Value: !Ref BasketryEC2Role
+
+  InstanceProfileName:
+    Description: Instance profile for the Basketry EC2 instance
+    Value: !Ref BasketryInstanceProfile
+
+  BasketryAppServerId:
+    Description: EC2 application server created by CloudFormation
+    Value: !Ref BasketryAppServer
+
+  BasketryAppServerPrivateIp:
+    Description: Private IP address of the Basketry application server
+    Value: !GetAtt BasketryAppServer.PrivateIp 
+
+  BasketryTargetGroupArn:
+    Description: Target group for the Basketry application server
+    Value: !Ref BasketryTargetGroup
+
+  BasketryLoadBalancerDNS:
+    Description: Public DNS name of the Basketry Application Load Balancer
+    Value: !GetAtt BasketryLoadBalancer.DNSName
+
+  BasketryLoadBalancerArn:
+    Description: ARN of the Basketry Application Load Balancer
+    Value: !Ref BasketryLoadBalancer
+
+  DatabaseSecurityGroupId:
+    Description: Security group for Basketry RDS MySQL
+    Value: !Ref DatabaseSecurityGroup
+
+  DBSubnetGroupName:
+    Description: DB subnet group for Basketry RDS
+    Value: !Ref BasketryDBSubnetGroup
+
+  BasketryDatabaseEndpoint:
+    Description: Endpoint address of the Basketry MySQL database
+    Value: !GetAtt BasketryDatabase.Endpoint.Address
+
+  BasketryDatabasePort:
+    Description: Port used by the Basketry MySQL database
+    Value: !GetAtt BasketryDatabase.Endpoint.Port
